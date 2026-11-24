@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Política de privacidade · RDO Digital</title><style>
+:root{--bg:#f4f5f7;--ink:#1c1f24;--mut:#5b6470;--card:#fff;--line:#d9dde3;--acc:#c85a00}
+@media(prefers-color-scheme:dark){:root{--bg:#14161a;--ink:#e8eaed;--mut:#9aa3ae;--card:#1d2026;--line:#2e333b;--acc:#ff8a2b}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:760px;margin:0 auto;padding:20px 16px 64px}
+h1{font-size:26px;margin:8px 0 4px}h2{font-size:18px;margin:28px 0 6px;color:var(--acc)}
+.mut{color:var(--mut);font-size:14px}ul{padding-left:22px}
+a{color:var(--acc)}table{border-collapse:collapse;width:100%;font-size:14px}td,th{border:1px solid var(--line);padding:6px 8px;text-align:left;vertical-align:top}
+</style></head><body><main>
+<h1>Política de privacidade</h1>
+<p class="mut">RDO Digital · Última atualização: 10 de outubro de 2026</p>
+
+<p>O RDO Digital é um aplicativo para registrar o diário de obra (RDO): atividades, fotos, equipe, equipamentos e condições do tempo, e gerar o relatório em PDF e Excel. Esta política explica quais dados o aplicativo usa, para quê, com quem são compartilhados e como você pode exercer seus direitos, conforme a Lei Geral de Proteção de Dados (LGPD, Lei 13.709/2018).</p>
+
+<h2>1. Quem é o responsável</h2>
+<p><b data-cfg="RESPONSAVEL_NOME">[nome do responsável pelo aplicativo]</b> fornece o aplicativo. Contato para assuntos de privacidade: <a id="mail" href="#"><span data-cfg="CONTATO_EMAIL">[e-mail de contato]</span></a>.</p>
+<p>Em relação aos dados da conta de cada usuário, o fornecedor do aplicativo é o controlador. Em relação aos registros de obra (atividades, fotos, equipe), a empresa que contratou o aplicativo é a controladora, e o fornecedor atua como operador, tratando esses dados apenas para prestar o serviço.</p>
+
+<h2>2. Dados que tratamos</h2>
+<table>
+<tr><th>Dado</th><th>Para quê</th></tr>
+<tr><td>Nome, e-mail e senha do usuário (a senha é guardada de forma criptografada), empresa e permissões</td><td>Criar a conta, entrar no aplicativo e controlar quem vê e altera o quê</td></tr>
+<tr><td>Dados da empresa: razão social, cliente, obra, logotipos, cidade e coordenadas da obra</td><td>Montar o cabeçalho do relatório, o carimbo das fotos e a previsão do tempo</td></tr>
+<tr><td>Cadastro da equipe: nomes e funções; presença, falta, férias, horários e exames ocupacionais (ASO) de cada dia</td><td>Compor o efetivo e o relatório diário</td></tr>
+<tr><td>Atividades, observações, condições do tempo, equipamentos e anotações da fiscalização</td><td>Compor o relatório diário</td></tr>
+<tr><td>Fotos da obra tiradas ou escolhidas pelo usuário, com data, hora e texto do carimbo</td><td>Anexar ao relatório</td></tr>
+<tr><td>Dados técnicos guardados no aparelho (sessão de login, rascunhos, fotos ainda não enviadas)</td><td>Manter o login e permitir o uso sem internet</td></tr>
+</table>
+<p>O aplicativo <b>não usa o GPS do aparelho</b>, não tem publicidade, não vende dados e não usa ferramentas de rastreamento ou análise de uso.</p>
+<p>Atenção: as fotos e anotações podem mostrar pessoas, como colegas de obra. Quem tira a foto deve ter autorização da empresa para registrá-las.</p>
+
+<h2>3. Permissões do aparelho</h2>
+<ul>
+<li><b>Câmera:</b> só quando você toca em "Tirar foto".</li>
+<li><b>Fotos / galeria:</b> para guardar na galeria do aparelho as fotos tiradas no aplicativo (pode ser desligado no menu) e para escolher fotos existentes.</li>
+</ul>
+
+<h2>4. Com quem os dados são compartilhados</h2>
+<table>
+<tr><th>Serviço</th><th>O que recebe</th><th>Finalidade</th></tr>
+<tr><td>Supabase (banco de dados, login e armazenamento de fotos)</td><td>Contas, registros e fotos da empresa</td><td>Guardar e sincronizar os dados entre os aparelhos</td></tr>
+<tr><td>Anthropic (inteligência artificial Claude)</td><td>O texto das atividades que o usuário escolhe para elaborar (local, disciplina, atividade, complemento). Fotos não são enviadas.</td><td>Escrever a descrição técnica do relatório</td></tr>
+<tr><td>Open-Meteo</td><td>Coordenadas da obra e, na configuração inicial, o nome da cidade</td><td>Previsão do tempo</td></tr>
+<tr><td>Netlify (hospedagem)</td><td>Endereço de IP e dados técnicos de acesso ao baixar os arquivos do aplicativo</td><td>Entregar o aplicativo</td></tr>
+<tr><td>Google Fonts</td><td>Endereço de IP ao carregar as fontes do aplicativo</td><td>Exibir as letras do aplicativo</td></tr>
+</table>
+<p>Esses serviços podem processar dados fora do Brasil. Nesses casos a transferência é feita para a prestação do serviço, com as garantias previstas na LGPD. A descrição técnica gerada por inteligência artificial deve sempre ser conferida pelo usuário antes de entrar no relatório.</p>
+<p>Os dados da empresa são visíveis apenas para os usuários daquela empresa. Cada empresa é isolada das demais no banco de dados.</p>
+
+<h2>5. Por quanto tempo guardamos</h2>
+<p>Os dados ficam guardados enquanto a empresa mantiver a conta. Você pode apagar a sua conta ou, se for administrador, a empresa inteira, a qualquer momento em <b>Menu (engrenagem) → Minha conta</b>. A exclusão da empresa apaga usuários, registros e fotos. Cópias de segurança do provedor podem levar algumas semanas para desaparecer. Ao excluir apenas a sua conta, os registros que você criou continuam com a empresa, porque fazem parte do diário de obra dela.</p>
+
+<h2>6. Seus direitos</h2>
+<p>Você pode pedir confirmação de que tratamos seus dados, acesso, correção, anonimização, portabilidade, informação sobre compartilhamento e a eliminação dos dados, e pode revogar consentimentos. Fale com o contato acima. Se você é funcionário de uma empresa que usa o aplicativo, também pode falar com a própria empresa. Você tem direito de reclamar à Autoridade Nacional de Proteção de Dados (ANPD).</p>
+
+<h2>7. Segurança</h2>
+<p>Usamos conexão criptografada (HTTPS), senhas criptografadas, isolamento de dados por empresa e controle de permissões por usuário. Nenhum sistema é totalmente imune a falhas; se houver incidente que afete seus dados, avisaremos conforme a lei.</p>
+
+<h2>8. Crianças e adolescentes</h2>
+<p>O aplicativo é destinado a profissionais maiores de 18 anos e não é direcionado a crianças.</p>
+
+<h2>9. Mudanças nesta política</h2>
+<p>Podemos atualizar esta política. A data de atualização fica no topo desta página, e mudanças relevantes serão avisadas no aplicativo.</p>
+
+<script src="config.js"></script>
+<script>(function(){var c=window.RDO_CONFIG||{};document.querySelectorAll('[data-cfg]').forEach(function(e){var v=c[e.getAttribute('data-cfg')];if(v)e.textContent=v});var a=document.getElementById('mail');if(a&&c.CONTATO_EMAIL)a.href='mailto:'+c.CONTATO_EMAIL;})();</script>
+</main></body></html>
