@@ -13,7 +13,7 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <link rel="icon" href="icons/icon-192.png">
-<script>window.RDO_BUILD="1795634669"</script>
+<script>window.RDO_BUILD="1795642175"</script>
 <script src="config.js"></script>
 <script src="native.js"></script>
 <script src="lib/pdf-lib.min.js"></script>
@@ -1068,8 +1068,16 @@ async function mailOne(kind){
   const f=await genFile(kind);let path=API.tok.emp+'/'+S.day.date+'/envio/'+Date.now()+'.'+kind;
   try{const up=await API.req('/storage/v1/object/fotos/'+path,{method:'POST',headers:{'Content-Type':f.blob.type,'x-upsert':'true'},body:f.blob});
     if(!up.ok)throw new Error(up.status===403?'seu perfil não pode enviar e-mail.':'não consegui mandar o arquivo ao servidor (erro '+up.status+').');
-    const r=await API.req('/functions/v1/elaborar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({acao:'enviar-email',hora:new Date().getHours(),tipo:kind,data:S.day.date,caminho:path,nome:f.name,rdo:String(f.m.dec>0?f.m.dec:'')})});
-    const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||('erro '+r.status));path='';
+    const b0={acao:'enviar-email',hora:new Date().getHours(),tipo:kind,data:S.day.date,caminho:path,nome:f.name,rdo:String(f.m.dec>0?f.m.dec:'')};
+    const call=async ex=>{const r=await API.req('/functions/v1/elaborar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...b0,...ex})});return{r,j:await r.json().catch(()=>({}))}};
+    const e1=(r,j)=>r.status===546?'o servidor passou do limite de processamento':(j.error||('erro '+r.status));
+    const {r,j}=await call({fase:'smtp'});if(!r.ok)throw new Error(e1(r,j));
+    // o e-mail já saiu. As etapas seguintes (cópia em Itens Enviados e Google Drive) vão em chamadas separadas, cada uma com seu limite de processamento no servidor.
+    // Se o servidor for antigo (não devolve msgId), ele já fez tudo na primeira chamada.
+    if(j.msgId){const ex={msgId:j.msgId,dataEnvio:j.dataEnvio};
+      try{const c=await call({...ex,fase:'copia'});j.copiaEnviados=c.r.ok?(c.j.copiaEnviados||''):'não consegui guardar a cópia ('+e1(c.r,c.j)+')'}catch(e){j.copiaEnviados='não consegui guardar a cópia ('+(e&&e.message||e)+')'}
+      try{const d=await call({...ex,fase:'drive',ultima:true});j.drive=d.r.ok?(d.j.drive||[]):[{erro:e1(d.r,d.j)}]}catch(e){j.drive=[{erro:String(e&&e.message||e)}]}}
+    path='';
     const ap=apInit(S.day);
     if(ap.st==='aprovado'){ap.mail={...(ap.mail||{}),[kind]:{by:(API.tok&&API.tok.nome)||'',t:Date.now(),to:(j.para||[]).join(', ')}};apLog(ap,'email-'+kind);dirty();await flush()}
     return j}

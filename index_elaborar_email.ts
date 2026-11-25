@@ -88,6 +88,64 @@ async function driveSubpasta(tok: string, pai: string, nome: string): Promise<st
     body: JSON.stringify({ name: nome, mimeType: "application/vnd.google-apps.folder", parents: [pai] }) });
   return c.id;
 }
+// Guarda uma cópia da mensagem na pasta de enviados da caixa, por IMAP escrito à mão (a biblioteca de IMAP gastava processamento demais
+// e a função estourava o limite de CPU). Devolve "ok" ou o motivo da falha.
+async function imapGuardaCopia(host: string, port: number, user: string, pass: string, raw: Uint8Array, quando: Date): Promise<string> {
+  const conn = await Deno.connectTls({ hostname: host, port });
+  const enc = new TextEncoder(), dec = new TextDecoder();
+  let buf = "", n = 0;
+  const bloco = new Uint8Array(65536);
+  const le = async (ate: (b: string) => boolean): Promise<string> => {
+    const limite = Date.now() + 25000;
+    while (!ate(buf)) {
+      if (Date.now() > limite) throw new Error("o servidor de e-mail demorou demais para responder");
+      const k = await conn.read(bloco);
+      if (k === null) throw new Error("o servidor de e-mail encerrou a conexão");
+      buf += dec.decode(bloco.subarray(0, k), { stream: true });
+    }
+    const r = buf; buf = ""; return r;
+  };
+  const escreve = async (d: Uint8Array) => { let o = 0; while (o < d.length) o += await conn.write(d.subarray(o)); };
+  const q = (v: string) => '"' + v.replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"';
+  const fim = (tag: string) => new RegExp(`(^|\\r\\n)${tag} (OK|NO|BAD)[^\r\n]*\\r\\n`);
+  const cmd = async (c: string): Promise<string> => {
+    const tag = "A" + (++n);
+    await escreve(enc.encode(`${tag} ${c}\r\n`));
+    const r = await le((b) => fim(tag).test(b));
+    const m = fim(tag).exec(r)!;
+    if (m[2] !== "OK") throw new Error(m[0].trim().slice(0, 160));
+    return r;
+  };
+  try {
+    await le((b) => /\r\n/.test(b));   // saudação do servidor
+    await cmd(`LOGIN ${q(user)} ${q(pass)}`);
+    const lista = await cmd(`LIST "" "*"`);
+    let alvo = "", alt = ""; const nomes: string[] = [];
+    for (const l of lista.split("\r\n")) {
+      const m = /^\* LIST \(([^)]*)\) (?:"(?:[^"\\]|\\.)*"|NIL) (.+)$/i.exec(l);
+      if (!m) continue;
+      let nome = m[2].trim();
+      if (nome.startsWith('"')) nome = nome.slice(1, -1).replace(/\\(.)/g, "$1");
+      nomes.push(nome);
+      if (/\\Sent\b/i.test(m[1])) alvo = alvo || nome;
+      else if (!alt && /^(inbox[./])?(sent|enviados|itens enviados|sent items|sent messages)$/i.test(nome)) alt = nome;
+    }
+    const pasta = alvo || alt;
+    if (!pasta) return "não achei a pasta de enviados (pastas da caixa: " + nomes.join(", ").slice(0, 200) + ")";
+    const M = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"], z = (x: number) => String(x).padStart(2, "0");
+    const dt = `${z(quando.getUTCDate())}-${M[quando.getUTCMonth()]}-${quando.getUTCFullYear()} ${z(quando.getUTCHours())}:${z(quando.getUTCMinutes())}:${z(quando.getUTCSeconds())} +0000`;
+    const tag = "A" + (++n);
+    await escreve(enc.encode(`${tag} APPEND ${q(pasta)} (\\Seen) "${dt}" {${raw.length}}\r\n`));
+    const r1 = await le((b) => /(^|\r\n)\+/.test(b) || fim(tag).test(b));
+    if (fim(tag).test(r1)) throw new Error(fim(tag).exec(r1)![0].trim().slice(0, 160));
+    await escreve(raw); await escreve(enc.encode("\r\n"));
+    const r2 = await le((b) => fim(tag).test(b));
+    const m2 = fim(tag).exec(r2)!;
+    if (m2[2] !== "OK") throw new Error(m2[0].trim().slice(0, 160));
+    try { await cmd("LOGOUT"); } catch { /* ignora */ }
+    return "ok";
+  } finally { try { conn.close(); } catch { /* ignora */ } }
+}
 // grava (ou substitui, se já houver um arquivo com o mesmo nome) um arquivo na pasta
 async function driveGrava(tok: string, pai: string, nome: string, tipo: string, dados: Uint8Array, modificado?: Date) {
   const ja = await driveLista(tok, pai, ` and name='${gq(nome)}' and mimeType!='application/vnd.google-apps.folder'`);
@@ -769,7 +827,13 @@ Deno.serve(async (req) => {
       if (ea || !arq) return json({ error: "Não encontrei o arquivo enviado. Tente de novo." }, 400);
       const nome = str(body.nome, 120).replace(/[^\p{L}\p{N}._ ()-]+/gu, "_") || `RDO.${tipo}`;
       const respostas = Deno.env.get("MAIL_REPLY_TO") || (propria ? undefined : data.user.email) || undefined;   // para onde vão as respostas (na conta própria, as respostas voltam para o próprio remetente)
-      const msgId = `<${crypto.randomUUID()}@rdo.potenciaeng>`, dataEnvio = new Date();
+      // O envio é feito em etapas (cada uma numa chamada própria, porque cada chamada tem um limite de processamento): "smtp" envia o e-mail,
+      // "copia" guarda a cópia em Itens Enviados e "drive" salva no Google Drive. Sem "fase", faz tudo de uma vez (comportamento antigo).
+      const fase = body.fase === "smtp" || body.fase === "copia" || body.fase === "drive" ? body.fase : "tudo";
+      const faseSmtp = fase === "tudo" || fase === "smtp", faseCopia = fase === "tudo" || fase === "copia", faseDrive = fase === "tudo" || fase === "drive";
+      const dtPedida = new Date(str(body.dataEnvio, 40));
+      const msgId = faseSmtp ? `<${crypto.randomUUID()}@rdo.potenciaeng>` : (str(body.msgId, 200) || `<${crypto.randomUUID()}@rdo.potenciaeng>`);
+      const dataEnvio = faseSmtp || isNaN(dtPedida.getTime()) ? new Date() : dtPedida;
       const anexo = Buffer.from(await arq.arrayBuffer());
       const nomeArq = nome.endsWith("." + tipo) ? nome : `${nome}.${tipo}`;
       const ICONES: Record<string, string> = { fone: "iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAADcElEQVR42n2UQWhcVRSGv3Pve/Pim5kkNSGJJTSaLCJpE1oSGqLtKAaqWAsipCCCKLgsFLoxVprJWJqdIKULQ1YigjG7SkFqKdYurNUWhSlIam1FMKHRGG1j82bevdfFe0MyafDAgQP38HPO+f/7ax4KJ7BTw5zjf8MJoOBSXZ9X31RUIBYwUOwEbxTcUyBPgBHgPnAR1NcgPwIOxjTMmRqC1IOVLIy3QHgK5DXwc+AAu6FdAVVAfwnRBJSuwGcaDhsAXQ92YgSy5yEzClEmeVMpUC0tUHXg9YD3OjxdhSOXE4xLTlIwB+/tAnUFCMHEkPEg/gHiz4Ff0hFzwMugRxNwU4W8D/eOweQH8Iz20hEMmF7wbTKBisC+CSc+Se5UF2eguBe8DyG7B9ZWwLYlfc/aDTc82QPSB3IMKtNQ+jQ5eJ88zHAphrd3QFMx2SC8BgvL8P5q2lycgkfegWgV1BK4F8HchJ2uduz1EGAi3czNQeYASANUvgUOqLRrXzKy86DhcXC7kilubDGdleSNHKjnwTYkJMkeoLmmQwWegAQJ8TYla1nD2KYbTgoULQQCFQ0+iUarPnguBZSPodIN8jfcXwAuaF2yQGQMaA0iEMegVJJxzJ8weQbMCyB5UF/B8h+bViq+BcGrUIngQUNCcA74F0i3pJJmzoAfQ/wrNB+Fo1H69cY09DlQB8GfUUphreLQob2Eoc/s7PcUCgP09rYwM/MN/f09FApdTE9/hzEO53LAXwbcETisPNimoFSFiX1KZXFuJWpry3lnz74CwPXrPzM7+xIdHXmuXr3J6dOjFApd3L27zNzcNeN527w45jkQB85uMAdZtdY6pXy9tPSPHh+/QGNjwK1bv3P8+EWGhzspl39jauoyd+6scO7cT4g0YIxVqWlsdhsnIuLAEIYB+/fvIJvN0NycZ3i4k6Gh7bS2NjE4uJ3duzvo7n6UcnkRpcQ5t6V9SQBaOeeiTMZjZKSTfD4gDDMMDXUwOPgY+XxAf38bAwPttLfnKJdNLCJBylZN9kUFkw5OPglyXiTb6dwDWlub8H3NwsISjY1NtLSE3L69SBBk6epqYn5+EQhS9tfegMmPYExLvX292wP5gxBZWBMApXJYm8gmqatAhFKhszZQcG8eTn2ROLi4TW69HjUBQyLqrer1GNO16j9rky13k2D54QAAAABJRU5ErkJggg==", mail: "iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAB9klEQVR42s3UPWtUQRQG4Gfu3myMIRvWIJjGTgVRTCXYWFgrgiIoFsFCbEwhaKduVjQKiiBYpVKwERt/QEAEG60TGy1FCxM/SbLZvdlrMTdmExMhSMBp5hzOzHve88n/fsLyXSv9I1abenuzGNZ2kNwhz8kDoSd6zPO/fC2hSb7A1pS5J9Qn0mhcrNI7XMhYmEYvIWAt0BL5T5IBeuJTjUlMJNFezpjPmPtBG8kYU30MVhjsj/JUH3mFfBuj3WQnSD7TmONnhgYsMVykN2X2Fq0DbL/PvoNcONORmiWmGdfP0z/O7Aey85Sf006hYJjmUQyzjJ7lyzWqp7n1giu7lsFOlbhxl4Fx5ieYGyJ5TVdR5d+Aij95d5Sv3WRmhPQw1Rdc3UNtC/ufUr3Mt0e0jnFnBpXONCd/9pLApR7qD/l+iFClPEl4T+Uk01eonSsqHGIKrAtYUK20qKWMveHLEOElaZOvx6nfi7a3gfBHB6Sr9CQ+lkbPI93cfcfwUQZ7Y4i1coxkb4laoFRaAzDNCW38oJ51hFHcjxtLbUG9uZLD7enoILItAFtdhAQXqR0pUtExl6GYqM7JCSHqja30J+SlVX3Y+EjYid2xauEvu2SF3iT7GKNbsW0elJlq83WDG+MUPqW8yni2uGn70DoxbuTkm7KxfwFDJ6AluThKwAAAAABJRU5ErkJggg==", site: "iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAACYklEQVR42rVUPWtUQRQ958772HWzQsCAiZqsEMRGFNJYCKawiFonNv4F7RQkwiroD9BGgr9AoqCg9sE6jdiocQ0IQQsx62bN7nvz7rXY7CabzUuw8DRTzJ0zZ849d4guqlWZej3mgGX8K5aHRg1L9z3+Bzg7O+sWFxeziavVaUhhWnTTOeccVA88rIRm6jJae2317cMFwBjUasMCIIPqlbBUurXxs66pzzKS+7OZgRQrD49EWSupAVgAgKC7H1BaG79+tG5en3lyqjJ2utFomsjerATMRREddO3O4+dTqhb1eHpFgiBNElcZO3Lm5PixS+vr63DO5YgzRHERmja/ClnvE9Z3M4l22yf1el0bGxsqpOQ9OGwnjAP+AazvFcHuShFQRERIiIjkKDQRIWAD+wOE1qk3bK95nFvlBxACiKO4wKDVdvt4yCguQNPNIgx+b0KDktRSHK2EgrHQ0ZxYXnYsoMqhcvETiFEQ8QChN5Xy8Eh8+9Gz845MzEAQlp9DkMTxTOWcEF96hENDo7YVrlX16bJ6X/B9ymkdq9ixjESnszQYAhdG7wH5sCOj+2P88t2X4sIJZKlCAhH4udqbB5/z6nc1ZevmfpylCytmBroQmZrbY3DQPbeDsCoA9cTM/AUJi5P0LTWFAIg1TRTm1UzFoNcqM/OrFoSiqW9+O/zxBRaZDSq8CMESlMCNICzOqSkYCNS31Mx3vh5TFRfdoyNEAljqf082jr5aAbKuyYM5JAlKx3wSEpUEwPZEmPaaQ8Lle7gE7aQhe5olrXfqE4Pl/WEZREIAaK6Uv/vtIfsP+AuDzw24EfQWZAAAAABJRU5ErkJggg==" };
@@ -802,16 +866,22 @@ Deno.serve(async (req) => {
         ...["fone", "mail", "site"].map((n) => ({ filename: n + ".png", content: Buffer.from(ICONES[n], "base64"), cid: cid(n), contentType: "image/png" })),
       ] : [];
       let falha = "";
+      let rawBuf: Uint8Array | null = null;
       try {
         if (usaSmtp) {
           const porta = Number(Deno.env.get("SMTP_PORT") || "587");
-          const smtp = nodemailer.createTransport({
+          const smtp = faseSmtp ? nodemailer.createTransport({
             host: smtpHost, port: porta, secure: porta === 465, requireTLS: porta !== 465,
             auth: { user: smtpU, pass: smtpP }, connectionTimeout: 20000, socketTimeout: 60000,
-          });
-          await smtp.sendMail({ from: de, to: para, cc: cc.length ? cc : undefined, bcc: cco.length ? cco : undefined, subject: assunto, text: textoPuro, html, replyTo: respostas, messageId: msgId, date: dataEnvio,
+          }) : null;
+          // a mensagem é montada uma só vez: o mesmo texto bruto vai pelo SMTP, para o Drive (.eml) e para a pasta de enviados (sem o cabeçalho Cco)
+          const montada: any = !(faseSmtp || faseCopia) ? { message: new Uint8Array() } : await nodemailer.createTransport({ streamTransport: true, buffer: true, newline: "windows" }).sendMail({
+            from: de, to: para, cc: cc.length ? cc : undefined, subject: assunto, text: textoPuro, html, replyTo: respostas, messageId: msgId, date: dataEnvio,
             attachments: [{ filename: nomeArq, content: anexo }, ...inl] });
-        } else {
+          rawBuf = new Uint8Array(montada.message);
+          const remet = /<([^>]+)>/.exec(de)?.[1] ?? de;
+          if (smtp) await smtp.sendMail({ envelope: { from: remet, to: [...para, ...cc, ...cco] }, raw: Buffer.from(rawBuf) });
+        } else if (faseSmtp) {
           const r = await fetch("https://api.resend.com/emails", {
             method: "POST",
             headers: { Authorization: `Bearer ${chave}`, "Content-Type": "application/json" },
@@ -821,33 +891,24 @@ Deno.serve(async (req) => {
           if (!r.ok) falha = (await r.text()).slice(0, 300);
         }
       } catch (e) { falha = String((e as any)?.message ?? e).slice(0, 300); }
-      await admin.storage.from("fotos").remove([caminho]);   // o arquivo temporário não fica guardado
+      if (fase === "tudo" || body.ultima === true) await admin.storage.from("fotos").remove([caminho]);   // o arquivo temporário não fica guardado
       if (falha) return json({ error: "O servidor de e-mail recusou o envio: " + falha }, 502);
+      if (fase === "smtp") return json({ ok: true, para, de, assinatura: !!(sig.nome || sig.mail), msgId, dataEnvio: dataEnvio.toISOString() });
       // cópia na pasta "Enviados" da caixa de quem enviou (o envio por SMTP não guarda cópia sozinho). Um problema aqui não desfaz o e-mail enviado.
       let copiaEnviados = "";
-      if (usaSmtp) {
+      if (usaSmtp && faseCopia) {
         try {
-          const raw: any = await nodemailer.createTransport({ streamTransport: true, buffer: true, newline: "windows", keepBcc: true } as any).sendMail({
-            from: de, to: para, cc: cc.length ? cc : undefined, bcc: cco.length ? cco : undefined, subject: assunto, text: textoPuro, html, replyTo: respostas, messageId: msgId, date: dataEnvio,
-            attachments: [{ filename: nomeArq, content: anexo }, ...inl] });
-          const { ImapFlow } = await import("npm:imapflow@1.0.164");
           const imapH = Deno.env.get("IMAP_HOST") || String(smtpHost).replace(/^smtp\./i, "imap.");
           const ip = Number(Deno.env.get("IMAP_PORT") || "993");
-          const cl: any = new ImapFlow({ host: imapH, port: ip, secure: ip === 993, auth: { user: smtpU!, pass: smtpP! }, logger: false });
-          cl.on("error", () => { /* aparece abaixo */ });
-          await cl.connect();
-          try {
-            const lista: any[] = await cl.list();
-            const env = lista.find((b: any) => b.specialUse === "\\Sent") || lista.find((b: any) => /^(inbox\.)?(sent|enviados|itens enviados|sent items|sent messages)$/i.test(String(b.name))) || lista.find((b: any) => /sent|enviad/i.test(String(b.path)));
-            if (!env) copiaEnviados = "não achei a pasta de enviados (pastas da caixa: " + lista.map((b: any) => b.path).join(", ").slice(0, 200) + ")";
-            else { await cl.append(env.path, raw.message, ["\\Seen"], dataEnvio); copiaEnviados = "ok"; console.log("cópia guardada em", env.path); }
-          } finally { try { await cl.logout(); } catch { /* ignora */ } }
+          if (!rawBuf) copiaEnviados = "mensagem não disponível para a cópia";
+          else { copiaEnviados = await imapGuardaCopia(imapH, ip, smtpU!, smtpP!, rawBuf, dataEnvio); if (copiaEnviados === "ok") console.log("cópia guardada em enviados de", smtpU); }
         } catch (e) { copiaEnviados = "não consegui guardar a cópia em Itens Enviados (" + String((e as any)?.message ?? e).slice(0, 160) + ")"; console.log(copiaEnviados); }
       }
+      if (fase === "copia") return json({ ok: true, copiaEnviados });
       // Google Drive (opcional): um problema aqui não desfaz o e-mail que já foi enviado
       const drive: any[] = [];
       const empDrive = Deno.env.get("DRIVE_EMPRESA_ID");
-      if (driveAtivo() && (!empDrive || empDrive === eu.empresa_id)) {
+      if (faseDrive && driveAtivo() && (!empDrive || empDrive === eu.empresa_id)) {
         try {
           const tipoMime = tipo === "pdf" ? "application/pdf" : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
           drive.push({ ok: await driveSalvaArquivo(`${m}-${y}`, nomeArq, tipoMime, new Uint8Array(anexo)) });
@@ -856,19 +917,20 @@ Deno.serve(async (req) => {
             let msg: Uint8Array | null = null;
             try {
               const mm = /^\s*"?([^"<]*?)"?\s*<([^>]+)>\s*$/.exec(de);
-              msg = montaMsg(CFB, { fromName: (mm ? mm[1] : "").trim(), fromEmail: (mm ? mm[2] : de).trim(), to: para, cc, subject: assunto, text: textoPuro, html, date: new Date(),
+              msg = montaMsg(CFB, { fromName: (mm ? mm[1] : "").trim(), fromEmail: (mm ? mm[2] : de).trim(), to: para, cc, subject: assunto, text: textoPuro, html, date: dataEnvio,
                 anexos: [{ name: nomeArq, data: new Uint8Array(anexo), mime: "application/pdf" }, ...inl.map((a) => ({ name: a.filename, data: new Uint8Array(a.content), cid: a.cid, mime: a.contentType }))] });
             } catch (e) { drive.push({ erro: "não consegui montar o .msg (" + String((e as any)?.message ?? e).slice(0, 120) + "); salvei como .eml" }); }
             if (msg) drive.push({ ok: await driveSalvaEmail(base, msg, "msg") });
             else {
-              const eml: any = await nodemailer.createTransport({ streamTransport: true, buffer: true, newline: "windows" }).sendMail({
-                from: de, to: para, cc: cc.length ? cc : undefined, subject: assunto, text: textoPuro, html, replyTo: respostas,
+              const eml: any = rawBuf && rawBuf.length ? { message: rawBuf } : await nodemailer.createTransport({ streamTransport: true, buffer: true, newline: "windows" }).sendMail({
+                from: de, to: para, cc: cc.length ? cc : undefined, subject: assunto, text: textoPuro, html, replyTo: respostas, messageId: msgId, date: dataEnvio,
                 attachments: [{ filename: nomeArq, content: anexo }, ...inl] });
               drive.push({ ok: await driveSalvaEmail(base, new Uint8Array(eml.message), "eml") });
             }
           }
         } catch (e) { drive.push({ erro: String((e as any)?.message ?? e).slice(0, 200) }); }
       }
+      if (fase === "drive") return json({ ok: true, drive });
       return json({ ok: true, para, de, assinatura: !!(sig.nome || sig.mail), drive, copiaEnviados });
     }
 
