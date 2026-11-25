@@ -13,7 +13,7 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <link rel="icon" href="icons/icon-192.png">
-<script>window.RDO_BUILD="1795632675"</script>
+<script>window.RDO_BUILD="1795634669"</script>
 <script src="config.js"></script>
 <script src="native.js"></script>
 <script src="lib/pdf-lib.min.js"></script>
@@ -1077,10 +1077,10 @@ async function mailOne(kind){
 async function buscaRespostas(){try{const r=await API.req('/functions/v1/elaborar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({acao:'respostas'})});const j=await r.json().catch(()=>({}));
   if(!r.ok)return{n:0,erro:j.error||('erro '+r.status)};if(j.config===false)return{n:0,aviso:j.aviso||'A leitura do e-mail ainda não foi configurada no servidor.'};if(j.erro)return{n:0,erro:j.erro};return{n:(j.salvos||[]).length,salvos:j.salvos||[],verificados:j.verificados||0,aviso:j.aviso||''}}catch(e){return{n:0,erro:String(e&&e.message||e)}}}
 async function sendMail(kind){if(S.mailBusy||S.busy||!canApprove())return;S.mailAsk=null;await flush();S.mailBusy=kind;S.gmsg=null;S.file=null;paint();
-  const kinds=kind==='both'?['pdf','xlsx']:[kind],msgs=[];let semAss=false,velho=false,drv=[];
-  try{for(const k of kinds){const j=await mailOne(k);msgs.push((k==='pdf'?'PDF':'Excel')+' para '+(j.para||[]).join(', '));if(j.assinatura===undefined)velho=true;else if(!j.assinatura)semAss=true;if(j.drive&&j.drive.length)drv=drv.concat(j.drive)}
+  const kinds=kind==='both'?['pdf','xlsx']:[kind],msgs=[];let semAss=false,velho=false,drv=[],cps=[];
+  try{for(const k of kinds){const j=await mailOne(k);msgs.push((k==='pdf'?'PDF':'Excel')+' para '+(j.para||[]).join(', '));if(j.assinatura===undefined)velho=true;else if(!j.assinatura)semAss=true;if(j.drive&&j.drive.length)drv=drv.concat(j.drive);if(j.copiaEnviados&&j.copiaEnviados!=='ok')cps.push(j.copiaEnviados)}
     let t=msgs.join(' e ')+' enviado'+(kinds.length>1?'s':'')+' por e-mail.'+(velho?' (atenção: a função do servidor está desatualizada, publique o novo index.ts)':semAss?' (sem assinatura eletrônica: preencha em Configurações > Envio por e-mail)':'');
-    const dv=drv.filter(x=>x&&x.erro);if(dv.length)t+=' Google Drive: '+dv.map(x=>x.erro).join('; ');else if(drv.length)t+=' Salvo no Google Drive.';
+    const dv=drv.filter(x=>x&&x.erro);if(dv.length)t+=' Google Drive: '+dv.map(x=>x.erro).join('; ');else if(drv.length)t+=' Salvo no Google Drive.';if(cps.length)t+=' Atenção: o e-mail foi enviado, mas a cópia não entrou em Itens Enviados: '+cps[0]+'.';
     S.gmsg={ok:1,t};
     const ap=apInit(S.day);
     if(ap.st==='aprovado'&&ap.mail&&ap.mail.pdf&&ap.mail.xlsx){S.mailBusy='';await apDo('client');if(S.day.aprov.st==='cliente')S.gmsg={ok:1,t:'PDF e Excel enviados. O RDO foi enviado ao cliente e está travado: não pode mais ser alterado.'+(dv.length?' Google Drive: '+dv.map(x=>x.erro).join('; '):drv.length?' Salvo no Google Drive.':'')}}}

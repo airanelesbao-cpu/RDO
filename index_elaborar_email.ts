@@ -452,6 +452,38 @@ Deno.serve(async (req) => {
       return json({ error: "operação inválida" }, 400);
     }
 
+    // ---------- preferências de cada usuário: assinatura de e-mail (get/set) e imagem do carimbo de assinatura (carimbo-get/carimbo-set) ----------
+    // Ficam na tabela usr_prefs (uma linha por usuário, só o servidor lê e grava).
+    if (body.acao === "assinatura") {
+      const op = body.op;
+      const { data: pr, error: ep } = await admin.from("usr_prefs").select("sig, carimbo").eq("user_id", eu.id).maybeSingle();
+      if (ep) return json({ error: "Não consegui acessar as preferências: " + ep.message }, 500);
+      const grava = async (campos: Record<string, unknown>) => {
+        const { error } = await admin.from("usr_prefs").upsert({ user_id: eu.id, empresa_id: eu.empresa_id, ...campos, updated_at: new Date().toISOString() }, { onConflict: "user_id" });
+        if (error) throw new Error(error.message);
+      };
+      try {
+        if (op === "get") return json({ ok: true, sig: pr?.sig ?? null });
+        if (op === "set") {
+          const g = body.sig ?? {};
+          const sig = { nome: str(g.nome, 80), cargo: str(g.cargo, 80), fone: str(g.fone, 40), email: str(g.email, 120), site: str(g.site, 120) };
+          await grava({ sig }); return json({ ok: true });
+        }
+        if (op === "carimbo-get") {
+          const c: any = pr?.carimbo ?? null;
+          if (c && c.removed) return json({ ok: true, removed: true });
+          return json({ ok: true, ass: c && c.img ? c : null });
+        }
+        if (op === "carimbo-set") {
+          const a = body.ass;
+          if (a === null || a === undefined) { await grava({ carimbo: { removed: true } }); return json({ ok: true }); }
+          if (typeof a !== "object" || typeof a.img !== "string" || !/^data:image\//.test(a.img) || a.img.length > 600000) return json({ error: "imagem de assinatura inválida ou grande demais" }, 400);
+          await grava({ carimbo: { img: a.img, on: a.on !== false, sz: ["p", "m", "g"].includes(a.sz) ? a.sz : "m" } }); return json({ ok: true });
+        }
+      } catch (e) { return json({ error: "Não consegui salvar: " + String((e as any)?.message ?? e).slice(0, 200) }, 500); }
+      return json({ error: "pedido inválido" }, 400);
+    }
+
     // ---------- destravar um RDO já enviado ao cliente (exige a senha de destravamento) ----------
     if (body.acao === "destravar") {
       const dia = str(body.data, 10);
@@ -741,7 +773,12 @@ Deno.serve(async (req) => {
       const anexo = Buffer.from(await arq.arrayBuffer());
       const nomeArq = nome.endsWith("." + tipo) ? nome : `${nome}.${tipo}`;
       const ICONES: Record<string, string> = { fone: "iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAADcElEQVR42n2UQWhcVRSGv3Pve/Pim5kkNSGJJTSaLCJpE1oSGqLtKAaqWAsipCCCKLgsFLoxVprJWJqdIKULQ1YigjG7SkFqKdYurNUWhSlIam1FMKHRGG1j82bevdfFe0MyafDAgQP38HPO+f/7ax4KJ7BTw5zjf8MJoOBSXZ9X31RUIBYwUOwEbxTcUyBPgBHgPnAR1NcgPwIOxjTMmRqC1IOVLIy3QHgK5DXwc+AAu6FdAVVAfwnRBJSuwGcaDhsAXQ92YgSy5yEzClEmeVMpUC0tUHXg9YD3OjxdhSOXE4xLTlIwB+/tAnUFCMHEkPEg/gHiz4Ff0hFzwMugRxNwU4W8D/eOweQH8Iz20hEMmF7wbTKBisC+CSc+Se5UF2eguBe8DyG7B9ZWwLYlfc/aDTc82QPSB3IMKtNQ+jQ5eJ88zHAphrd3QFMx2SC8BgvL8P5q2lycgkfegWgV1BK4F8HchJ2uduz1EGAi3czNQeYASANUvgUOqLRrXzKy86DhcXC7kilubDGdleSNHKjnwTYkJMkeoLmmQwWegAQJ8TYla1nD2KYbTgoULQQCFQ0+iUarPnguBZSPodIN8jfcXwAuaF2yQGQMaA0iEMegVJJxzJ8weQbMCyB5UF/B8h+bViq+BcGrUIngQUNCcA74F0i3pJJmzoAfQ/wrNB+Fo1H69cY09DlQB8GfUUphreLQob2Eoc/s7PcUCgP09rYwM/MN/f09FApdTE9/hzEO53LAXwbcETisPNimoFSFiX1KZXFuJWpry3lnz74CwPXrPzM7+xIdHXmuXr3J6dOjFApd3L27zNzcNeN527w45jkQB85uMAdZtdY6pXy9tPSPHh+/QGNjwK1bv3P8+EWGhzspl39jauoyd+6scO7cT4g0YIxVqWlsdhsnIuLAEIYB+/fvIJvN0NycZ3i4k6Gh7bS2NjE4uJ3duzvo7n6UcnkRpcQ5t6V9SQBaOeeiTMZjZKSTfD4gDDMMDXUwOPgY+XxAf38bAwPttLfnKJdNLCJBylZN9kUFkw5OPglyXiTb6dwDWlub8H3NwsISjY1NtLSE3L69SBBk6epqYn5+EQhS9tfegMmPYExLvX292wP5gxBZWBMApXJYm8gmqatAhFKhszZQcG8eTn2ROLi4TW69HjUBQyLqrer1GNO16j9rky13k2D54QAAAABJRU5ErkJggg==", mail: "iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAB9klEQVR42s3UPWtUQRQG4Gfu3myMIRvWIJjGTgVRTCXYWFgrgiIoFsFCbEwhaKduVjQKiiBYpVKwERt/QEAEG60TGy1FCxM/SbLZvdlrMTdmExMhSMBp5hzOzHve88n/fsLyXSv9I1abenuzGNZ2kNwhz8kDoSd6zPO/fC2hSb7A1pS5J9Qn0mhcrNI7XMhYmEYvIWAt0BL5T5IBeuJTjUlMJNFezpjPmPtBG8kYU30MVhjsj/JUH3mFfBuj3WQnSD7TmONnhgYsMVykN2X2Fq0DbL/PvoNcONORmiWmGdfP0z/O7Aey85Sf006hYJjmUQyzjJ7lyzWqp7n1giu7lsFOlbhxl4Fx5ieYGyJ5TVdR5d+Aij95d5Sv3WRmhPQw1Rdc3UNtC/ufUr3Mt0e0jnFnBpXONCd/9pLApR7qD/l+iFClPEl4T+Uk01eonSsqHGIKrAtYUK20qKWMveHLEOElaZOvx6nfi7a3gfBHB6Sr9CQ+lkbPI93cfcfwUQZ7Y4i1coxkb4laoFRaAzDNCW38oJ51hFHcjxtLbUG9uZLD7enoILItAFtdhAQXqR0pUtExl6GYqM7JCSHqja30J+SlVX3Y+EjYid2xauEvu2SF3iT7GKNbsW0elJlq83WDG+MUPqW8yni2uGn70DoxbuTkm7KxfwFDJ6AluThKwAAAAABJRU5ErkJggg==", site: "iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAACYklEQVR42rVUPWtUQRQ958772HWzQsCAiZqsEMRGFNJYCKawiFonNv4F7RQkwiroD9BGgr9AoqCg9sE6jdiocQ0IQQsx62bN7nvz7rXY7CabzUuw8DRTzJ0zZ849d4guqlWZej3mgGX8K5aHRg1L9z3+Bzg7O+sWFxeziavVaUhhWnTTOeccVA88rIRm6jJae2317cMFwBjUasMCIIPqlbBUurXxs66pzzKS+7OZgRQrD49EWSupAVgAgKC7H1BaG79+tG5en3lyqjJ2utFomsjerATMRREddO3O4+dTqhb1eHpFgiBNElcZO3Lm5PixS+vr63DO5YgzRHERmja/ClnvE9Z3M4l22yf1el0bGxsqpOQ9OGwnjAP+AazvFcHuShFQRERIiIjkKDQRIWAD+wOE1qk3bK95nFvlBxACiKO4wKDVdvt4yCguQNPNIgx+b0KDktRSHK2EgrHQ0ZxYXnYsoMqhcvETiFEQ8QChN5Xy8Eh8+9Gz845MzEAQlp9DkMTxTOWcEF96hENDo7YVrlX16bJ6X/B9ymkdq9ixjESnszQYAhdG7wH5sCOj+2P88t2X4sIJZKlCAhH4udqbB5/z6nc1ZevmfpylCytmBroQmZrbY3DQPbeDsCoA9cTM/AUJi5P0LTWFAIg1TRTm1UzFoNcqM/OrFoSiqW9+O/zxBRaZDSq8CMESlMCNICzOqSkYCNS31Mx3vh5TFRfdoyNEAljqf082jr5aAbKuyYM5JAlKx3wSEpUEwPZEmPaaQ8Lle7gE7aQhe5olrXfqE4Pl/WEZREIAaK6Uv/vtIfsP+AuDzw24EfQWZAAAAABJRU5ErkJggg==" };
-      const sig = { nome: str(cfg.sigNome, 80), cargo: str(cfg.sigCargo, 80), fone: str(cfg.sigFone, 40), mail: str(cfg.sigEmail, 120), site: str(cfg.sigSite, 120) };
+      // assinatura de quem está enviando (Configurações > Minha assinatura de e-mail); se ele ainda não tiver, vale a antiga da obra
+      const { data: prs } = await admin.from("usr_prefs").select("sig").eq("user_id", eu.id).maybeSingle();
+      const sp: any = (prs as any)?.sig;
+      const sig = sp && (sp.nome || sp.email)
+        ? { nome: str(sp.nome, 80), cargo: str(sp.cargo, 80), fone: str(sp.fone, 40), mail: str(sp.email, 120), site: str(sp.site, 120) }
+        : { nome: str(cfg.sigNome, 80), cargo: str(cfg.sigCargo, 80), fone: str(cfg.sigFone, 40), mail: str(cfg.sigEmail, 120), site: str(cfg.sigSite, 120) };
       const logoM = /^data:image\/(png|jpeg|jpg|gif);base64,([A-Za-z0-9+\/=]+)$/.exec(String(cfg.logoSig || cfg.logoPot || ""));
       const cid = (n: string) => `${n}@rdo`;
       const fonte = "font-family:Calibri,Arial,sans-serif;font-size:11pt";
@@ -802,10 +839,10 @@ Deno.serve(async (req) => {
           try {
             const lista: any[] = await cl.list();
             const env = lista.find((b: any) => b.specialUse === "\\Sent") || lista.find((b: any) => /^(inbox\.)?(sent|enviados|itens enviados|sent items|sent messages)$/i.test(String(b.name))) || lista.find((b: any) => /sent|enviad/i.test(String(b.path)));
-            if (!env) copiaEnviados = "não achei a pasta Enviados";
-            else { await cl.append(env.path, raw.message, ["\\Seen"], dataEnvio); copiaEnviados = "ok"; }
+            if (!env) copiaEnviados = "não achei a pasta de enviados (pastas da caixa: " + lista.map((b: any) => b.path).join(", ").slice(0, 200) + ")";
+            else { await cl.append(env.path, raw.message, ["\\Seen"], dataEnvio); copiaEnviados = "ok"; console.log("cópia guardada em", env.path); }
           } finally { try { await cl.logout(); } catch { /* ignora */ } }
-        } catch (e) { copiaEnviados = "não consegui guardar a cópia em Enviados (" + String((e as any)?.message ?? e).slice(0, 120) + ")"; }
+        } catch (e) { copiaEnviados = "não consegui guardar a cópia em Itens Enviados (" + String((e as any)?.message ?? e).slice(0, 160) + ")"; console.log(copiaEnviados); }
       }
       // Google Drive (opcional): um problema aqui não desfaz o e-mail que já foi enviado
       const drive: any[] = [];
