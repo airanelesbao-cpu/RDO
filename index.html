@@ -13,7 +13,7 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <link rel="icon" href="icons/icon-192.png">
-<script>window.RDO_BUILD="1795642175"</script>
+<script>window.RDO_BUILD="1795647424"</script>
 <script src="config.js"></script>
 <script src="native.js"></script>
 <script src="lib/pdf-lib.min.js"></script>
@@ -1082,8 +1082,13 @@ async function mailOne(kind){
     if(ap.st==='aprovado'){ap.mail={...(ap.mail||{}),[kind]:{by:(API.tok&&API.tok.nome)||'',t:Date.now(),to:(j.para||[]).join(', ')}};apLog(ap,'email-'+kind);dirty();await flush()}
     return j}
   finally{if(path)API.req('/storage/v1/object/fotos/'+path,{method:'DELETE'}).catch(()=>{})}}
-async function buscaRespostas(){try{const r=await API.req('/functions/v1/elaborar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({acao:'respostas'})});const j=await r.json().catch(()=>({}));
-  if(!r.ok)return{n:0,erro:j.error||('erro '+r.status)};if(j.config===false)return{n:0,aviso:j.aviso||'A leitura do e-mail ainda não foi configurada no servidor.'};if(j.erro)return{n:0,erro:j.erro};return{n:(j.salvos||[]).length,salvos:j.salvos||[],verificados:j.verificados||0,aviso:j.aviso||''}}catch(e){return{n:0,erro:String(e&&e.message||e)}}}
+async function buscaRespostas(){let salvos=[],verif=0,aviso='';
+  try{for(let i=0;i<6;i++){const r=await API.req('/functions/v1/elaborar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({acao:'respostas'})});const j=await r.json().catch(()=>({}));
+    if(!r.ok)return{n:salvos.length,salvos,erro:r.status===546?'o servidor passou do limite de processamento ao ler o e-mail':(j.error||('erro '+r.status))};
+    if(j.config===false)return{n:0,aviso:j.aviso||'A leitura do e-mail ainda não foi configurada no servidor.'};if(j.erro)return{n:salvos.length,salvos,erro:j.erro};
+    salvos=salvos.concat(j.salvos||[]);verif=Math.max(verif,j.verificados||0);aviso=j.aviso||aviso;
+    if(!j.restantes||!(j.salvos||[]).length)break}
+    return{n:salvos.length,salvos,verificados:verif,aviso}}catch(e){return{n:salvos.length,salvos,erro:String(e&&e.message||e)}}}
 async function sendMail(kind){if(S.mailBusy||S.busy||!canApprove())return;S.mailAsk=null;await flush();S.mailBusy=kind;S.gmsg=null;S.file=null;paint();
   const kinds=kind==='both'?['pdf','xlsx']:[kind],msgs=[];let semAss=false,velho=false,drv=[],cps=[];
   try{for(const k of kinds){const j=await mailOne(k);msgs.push((k==='pdf'?'PDF':'Excel')+' para '+(j.para||[]).join(', '));if(j.assinatura===undefined)velho=true;else if(!j.assinatura)semAss=true;if(j.drive&&j.drive.length)drv=drv.concat(j.drive);if(j.copiaEnviados&&j.copiaEnviados!=='ok')cps.push(j.copiaEnviados)}

@@ -77,7 +77,7 @@ async function gj(tok: string, url: string, init: any = {}) {
 }
 async function driveLista(tok: string, pai: string, extra = ""): Promise<any[]> {
   const q = encodeURIComponent(`'${pai}' in parents and trashed=false${extra}`);
-  const j = await gj(tok, `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name,mimeType)&pageSize=1000&supportsAllDrives=true&includeItemsFromAllDrives=true`);
+  const j = await gj(tok, `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name,mimeType,modifiedTime)&pageSize=1000&supportsAllDrives=true&includeItemsFromAllDrives=true`);
   return j.files ?? [];
 }
 async function driveSubpasta(tok: string, pai: string, nome: string): Promise<string> {
@@ -604,7 +604,14 @@ Deno.serve(async (req) => {
         type Achado = { id: string; nro: number; carregar: () => Promise<Carga> };
         const achados: Achado[] = [];
         let verificados = 0, avisoCaixas = "";
-        const rxRdo = /(?:RDO|di[aá]rio\s+de\s+obra)[^\d\n]{0,25}(\d{2,4})/i;
+        // Para não gastar o limite de processamento do servidor: só olha e-mails recebidos DEPOIS da última resposta já guardada na pasta
+        // (as anteriores já foram guardadas à mão), só baixa os que têm "diário de obra"/RDO no assunto, e trata poucos por chamada.
+        const tokD = await driveToken();
+        const jaResp = await driveLista(tokD, pastaResp, " and mimeType!='application/vnd.google-apps.folder'");
+        const ultimaResp = jaResp.reduce((mx: number, f: any) => Math.max(mx, Date.parse(f.modifiedTime) || 0), 0);
+        const desde = new Date(ultimaResp ? ultimaResp + 1000 : Date.now() - 3 * 864e5);
+        const LIM = 2; let processados = 0, restantes = 0; const semNum: string[] = [];
+        const rxRdo = /(?:RDO|di[aá]rio\s+de\s+obra)[^\d\n]{0,25}(\d{2,4})(?![-\/.]\d)/i;
         const doCliente = (de: string) => !!de && (enderecos.has(de) || dominios.has(de.split("@")[1]));
         if (usaMs) {
           // token da Microsoft
@@ -655,7 +662,7 @@ Deno.serve(async (req) => {
             await cliente.connect();
             const trava = await cliente.getMailboxLock("INBOX");
             try {
-              const uids: number[] = (await cliente.search({ since: new Date(Date.now() - 60 * 864e5) }, { uid: true })) || [];
+              const uids: number[] = (await cliente.search({ since: new Date(desde.getTime() - 864e5) }, { uid: true })) || [];
               const ultimos = uids.slice(-300);
               const cand: { uid: number; id: string; subject: string }[] = [];
               if (ultimos.length) {
@@ -666,17 +673,23 @@ Deno.serve(async (req) => {
                   if (reg.ids[id] || vistos.has(id)) continue;
                   const de = String(env.from?.[0]?.address ?? "").toLowerCase();
                   if (!doCliente(de)) continue;
-                  cand.push({ uid: msg.uid, id, subject: String(env.subject ?? "") });
+                  const quando = env.date instanceof Date ? env.date : null;
+                  if (quando && quando.getTime() < desde.getTime()) continue;
+                  const ass = String(env.subject ?? "");
+                  if (!/di[aá]rio\s+de\s+obra|\brdo\b/i.test(ass)) continue;
+                  cand.push({ uid: msg.uid, id, subject: ass });
                 }
               }
               const emails = (v: any) => (Array.isArray(v) ? v.flatMap((x: any) => x.value ?? []) : (v?.value ?? [])).map((x: any) => String(x.address ?? "")).filter(emailOk);
               for (const c of cand) {
+                if (processados >= LIM) { restantes++; continue; }
+                processados++;
                 const m: any = await cliente.fetchOne(String(c.uid), { source: true }, { uid: true });
                 if (!m || !m.source) continue;
                 const p: any = await simpleParser(m.source);
                 const texto0 = String(p.text ?? "");
-                const mm = rxRdo.exec(c.subject) || rxRdo.exec(c.subject + " " + texto0.slice(0, 600));
-                if (!mm) continue;
+                const mm = rxRdo.exec(c.subject) || rxRdo.exec(c.subject + " " + texto0.slice(0, 8000));
+                if (!mm) { semNum.push(c.id); continue; }
                 const raw = new Uint8Array(m.source);
                 vistos.add(c.id); achados.push({ id: c.id, nro: Number(mm[1]), carregar: async () => ({
                   fromName: String(p.from?.value?.[0]?.name ?? ""), fromEmail: String(p.from?.value?.[0]?.address ?? ""),
@@ -695,10 +708,9 @@ Deno.serve(async (req) => {
           avisoCaixas = errosCaixa.length ? "Algumas caixas não abriram: " + errosCaixa.join("; ") : "";
         }
         const salvos: string[] = [];
-        if (achados.length) {
-          const tokD = await driveToken();
-          const enviados = pastaEnv ? await driveLista(tokD, pastaEnv, " and mimeType!='application/vnd.google-apps.folder'") : [];
-          for (const a of achados.reverse()) {
+        if (achados.length || semNum.length) {
+          for (const id of semNum) reg.ids[id] = { nro: 0, nome: "", t: Date.now() };   // examinado e sem número de RDO: não baixa de novo
+          for (const a of (usaMs ? achados.reverse() : achados)) {
             // nome no padrão da pasta: "NN. RE Diário de obra DD-MM" (NN = próxima do sequencial da pasta; DD-MM = dia do RDO respondido)
             const full0 = await a.carregar();
             let dm = "";
@@ -724,7 +736,7 @@ Deno.serve(async (req) => {
           reg.ids = Object.fromEntries(ids);
           await admin.from("kv").upsert({ empresa_id: eu.empresa_id, key: "resp-reg", value: reg, deleted: false, autor: eu.id, updated_at: new Date().toISOString() }, { onConflict: "empresa_id,key" });
         }
-        return json({ ok: true, config: true, via: usaMs ? "microsoft" : "imap", verificados, salvos, aviso: avisoCaixas });
+        return json({ ok: true, config: true, via: usaMs ? "microsoft" : "imap", verificados, salvos, restantes, aviso: avisoCaixas });
       } catch (e) { return json({ ok: false, config: true, erro: String((e as any)?.message ?? e).slice(0, 300) }); }
     }
 
