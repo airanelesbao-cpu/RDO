@@ -916,6 +916,7 @@ Deno.serve(async (req) => {
           else { copiaEnviados = await imapGuardaCopia(imapH, ip, smtpU!, smtpP!, rawBuf, dataEnvio); if (copiaEnviados === "ok") console.log("cópia guardada em enviados de", smtpU); }
         } catch (e) { copiaEnviados = "não consegui guardar a cópia em Itens Enviados (" + String((e as any)?.message ?? e).slice(0, 160) + ")"; console.log(copiaEnviados); }
       }
+      console.log("envio", fase, "de", loginEmail, "| conta:", smtpU, "| propria:", propria, "| cópia:", copiaEnviados || "(não tentada)");
       if (fase === "copia") return json({ ok: true, copiaEnviados });
       // Google Drive (opcional): um problema aqui não desfaz o e-mail que já foi enviado
       const drive: any[] = [];
