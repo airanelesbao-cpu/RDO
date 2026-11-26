@@ -131,6 +131,7 @@ async function imapGuardaCopia(host: string, port: number, user: string, pass: s
       else if (!alt && /^(inbox[./])?(sent|enviados|itens enviados|sent items|sent messages)$/i.test(nome)) alt = nome;
     }
     const pasta = alvo || alt;
+    console.log("IMAP pastas da caixa:", nomes.join(" | "), "| marcada como enviados:", alvo || "(nenhuma)", "| por nome:", alt || "(nenhuma)", "| usada:", pasta || "(nenhuma)");
     if (!pasta) return "não achei a pasta de enviados (pastas da caixa: " + nomes.join(", ").slice(0, 200) + ")";
     const M = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"], z = (x: number) => String(x).padStart(2, "0");
     const dt = `${z(quando.getUTCDate())}-${M[quando.getUTCMonth()]}-${quando.getUTCFullYear()} ${z(quando.getUTCHours())}:${z(quando.getUTCMinutes())}:${z(quando.getUTCSeconds())} +0000`;
@@ -752,7 +753,7 @@ Deno.serve(async (req) => {
       const raiz = Deno.env.get("DRIVE_PASTA_FOTOS") || "14FDs4bnzXM0SHrt3O_qpyJi-d_lSIsRh";   // pasta "07. Fotos da obra"
       try {
         const { data: rows } = await admin.from("kv").select("key,value").eq("empresa_id", eu.empresa_id).like("key", `${dia}/ph/%`).eq("deleted", false).limit(1000);
-        const fotos = (rows ?? []).map((r: any) => r.value).filter((v: any) => v && v.id && v.path && !v.del).sort((a: any, b: any) => (a.t || 0) - (b.t || 0));
+        const fotos = (rows ?? []).map((r: any) => r.value).filter((v: any) => v && v.id && v.path).sort((a: any, b: any) => (a.t || 0) - (b.t || 0));
         const [y, m, d] = dia.split("-");
         const pastaTxt = `${m}-${y}/${d}-${m}-${y}`;
         if (!fotos.length) return json({ ok: true, config: true, salvas: 0, jaExistiam: 0, restantes: 0, total: 0, pasta: pastaTxt });

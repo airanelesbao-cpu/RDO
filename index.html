@@ -13,7 +13,7 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <link rel="icon" href="icons/icon-192.png">
-<script>window.RDO_BUILD="1795648257"</script>
+<script>window.RDO_BUILD="1795656784"</script>
 <script src="config.js"></script>
 <script src="native.js"></script>
 <script src="lib/pdf-lib.min.js"></script>
@@ -1688,7 +1688,7 @@ function vFotografias(){loadAgg();const sel=S.fDia||S.day.date,today=S.day.date;
   return`<section class="card"><div class="hd"><h2>Pastas por data</h2><span class="chip">${dates.length}</span></div><p class="hint" style="margin:0 0 6px">Todas as fotos inseridas nos RDOs ficam guardadas aqui, uma pasta por dia. Se uma foto for apagada da atividade, ela continua na pasta.</p>
     <div class="chips">${dates.map(dt=>`<button type="button" class="chip sel" data-a="f-open" data-k="${dt}" aria-pressed="${dt===sel}">${fmtBR(dt)}${dt===today?' (aberto)':''} · ${cnt[dt]||0}</button>`).join('')}</div></section>
   <section class="card"><div class="hd"><h2>Fotos de ${fmtBR(sel)}</h2><span class="chip info">${list.length}${nDel?' · '+nDel+(nDel===1?' removida':' removidas'):''}</span></div>
-    ${ents===null?'<p class="hint">Carregando as fotos…</p>':list.length?`<div class="row" style="justify-content:flex-end"><button class="btn sm" type="button" data-a="f-zip" ${S.fZip?'disabled':''}>${S.fZip?'Preparando…':'Baixar todas (ZIP)'}</button></div><div class="pgrid">${tiles}</div>`:'<p class="hint">Nenhuma foto nesta pasta.</p>'}</section>
+    ${ents===null?'<p class="hint">Carregando as fotos…</p>':list.length?`<div class="row" style="justify-content:flex-end"><button class="btn sm" type="button" data-a="f-drive" ${S.fDrv?'disabled':''}>${S.fDrv?'Guardando no Drive…':'Guardar todas no Drive'}</button> <button class="btn sm" type="button" data-a="f-zip" ${S.fZip?'disabled':''}>${S.fZip?'Preparando…':'Baixar todas (ZIP)'}</button></div>${S.fDrvMsg?`<p class="hint" style="text-align:right">${esc(S.fDrvMsg)}</p>`:''}<div class="pgrid">${tiles}</div>`:'<p class="hint">Nenhuma foto nesta pasta.</p>'}</section>
   <section class="card"><h2>Neste aparelho</h2><label class="chk"><input type="checkbox" data-a="gal-toggle" ${galOn()?'checked':''}> Oferecer salvar as fotos da câmera na galeria do celular</label></section>`}
 async function arqZip(){const sel=S.fDia||S.day.date,list=S.arqList||[];if(!list.length||S.fZip)return;
   const hz=await pickSave((S.cfg.obraCurta||'RDO').replace(/[^\p{L}\p{N}]+/gu,'_')+'_fotos_'+sel+'.zip','zip');if(hz==='x')return;S.fZip=1;paint();
@@ -2191,6 +2191,12 @@ document.addEventListener('click',async e=>{
     case 'a-clear':S.aQ='';S.aDe='';S.aAte='';S.aDisc='';S.aN=0;paint();return;
     case 'a-more':S.aN=(S.aN||100)+100;paint();return;
     case 'f-open':S.fDia=b.dataset.k;paint();return;
+    case 'f-drive':{if(S.fDrv)return;const dt=S.fDia||S.day.date;S.fDrv=1;S.fDrvMsg='';paint();let sv=0,fl=0,tt=0,pa='',er='';
+      try{for(let i=0;i<20;i++){const r=await API.req('/functions/v1/elaborar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({acao:'fotos-drive',data:dt})});const j=await r.json().catch(()=>({}));
+        if(!r.ok||j.error||j.erro){er=j.erro||j.error||('erro '+r.status);break}
+        if(j.config===false){er='O Drive não está configurado para esta obra.';break}
+        sv+=j.salvas||0;fl+=j.falhas||0;tt=j.total||0;pa=j.pasta||'';if(!j.restantes||(!j.salvas&&!j.falhas))break}}catch(e){er=String(e&&e.message||e)}
+      S.fDrv=0;S.fDrvMsg=er?'Não consegui guardar no Drive: '+er:tt===0?'Nenhuma foto neste dia.':(sv?sv+(sv===1?' foto guardada':' fotos guardadas'):'Todas as fotos já estavam')+' no Drive ('+pa+', '+tt+' no total)'+(fl?'. '+fl+' falharam: tente de novo.':'.');paint();return}
     case 'f-zip':await arqZip();return;
     case 'rdo-menu':kmenu(true,b,b.dataset.k);return;
     case 'rdo-del-ask':{const m=document.getElementById('kmenu'),k=b.dataset.k;if(m)m.innerHTML=`<p>Excluir o RDO de <b>${fmtBR(k)}</b>? As atividades, o efetivo e a aprovação deste dia são apagados. As fotos continuam guardadas em Fotografias.</p><label class="f" style="display:block;margin:6px 0">Senha de exclusão<input id="rdo-del-pw" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Digite a senha" style="width:100%"></label><div id="rdo-del-err" class="warn" hidden style="margin:4px 0"></div><div class="row"><button type="button" class="km-i bad solid" data-a="rdo-del-ok" data-k="${k}">Excluir</button><button type="button" class="km-i" data-a="rdo-del-no">Cancelar</button></div>`;if(m)m.style.top=Math.max(8,Math.min(parseFloat(m.style.top)||8,innerHeight-m.offsetHeight-8))+'px';return}
